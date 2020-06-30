@@ -28,7 +28,7 @@ def _lap_reg(prob, laplacian):
 
     for k in range(n_component):
         fk = prob[:, k]
-        lap_reg[k] = np.dot(np.dot(fk, laplacian), fk)
+        lap_reg[k] = fk @ laplacian @ fk
 
     return lap_reg
 
