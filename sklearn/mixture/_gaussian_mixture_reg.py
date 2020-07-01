@@ -22,7 +22,7 @@ def _lap_reg(prob, laplacian):
     (n_samples, n_component) = prob.shape
     assert laplacian.shape == (n_samples, n_samples)
 
-    print("Our regulizer was called!")
+    # print("Our regulizer was called!")
 
     lap_reg = np.empty((n_component))
 
@@ -65,7 +65,7 @@ class LapRegGaussianMixture(GaussianMixture):
         weighted_log_prob : array, shape (n_samples, n_component)
         """
 
-        print("Our overloaded function was called!")
+        # print("Our overloaded function was called!")
         res = super()._estimate_weighted_log_prob(X)
         
         if self.laplacian is not None and self.lap_mag is not None:
