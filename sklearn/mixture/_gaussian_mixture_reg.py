@@ -4,25 +4,27 @@
 # License: TBD (probably BSD 3 clause)
 
 import numpy as np
+from ._base import _check_X
 from ._gaussian_mixture import GaussianMixture
+from ..utils import check_random_state
 from ..utils.validation import _deprecate_positional_args
 
 def _lap_reg(prob, laplacian):
-    """Calculate the Laplacian Regularizer
+    """calculate the laplacian regularizer
 
-    Parameters
+    parameters
     ----------
     prob      : array-like of shape (n_samples, n_component)
     laplacian : array-like of shape (n_samples, n_samples)
 
-    Returns
+    returns
     -------
     lap_reg : array, shape (n_component) (?)
     """
     (n_samples, n_component) = prob.shape
     assert laplacian.shape == (n_samples, n_samples)
 
-    # print("Our regulizer was called!")
+    # print("our regulizer was called!")
 
     lap_reg = np.empty((n_component))
 
@@ -32,6 +34,26 @@ def _lap_reg(prob, laplacian):
 
     return lap_reg
 
+def _lap_reg_2(prob, similarity):
+    """calculate the laplacian regularizer
+
+    parameters
+    ----------
+    prob      : array-like of shape (n_samples, n_component)
+    laplacian : array-like of shape (n_samples, n_samples)
+
+    returns
+    -------
+    prob      : array, shape (n_samples, n_component)
+    """
+    (n_samples, n_component) = prob.shape
+    assert similarity.shape == (n_samples, n_samples)
+
+    prob = similarity @ prob / np.sum(similarity, axis=0)
+
+    return prob 
+
+
 class LapRegGaussianMixture(GaussianMixture):
 
     @_deprecate_positional_args
@@ -40,7 +62,7 @@ class LapRegGaussianMixture(GaussianMixture):
                  weights_init=None, means_init=None, precisions_init=None,
                  random_state=None, warm_start=False,
                  verbose=0, verbose_interval=10,
-                 laplacian=None, lap_mag=None):
+                 laplacian=None, lap_mag=None, lap_reduce=0.9):
         super().__init__(
             n_components=n_components, tol=tol, reg_covar=reg_covar,
             max_iter=max_iter, n_init=n_init, init_params=init_params,
@@ -49,119 +71,70 @@ class LapRegGaussianMixture(GaussianMixture):
             covariance_type=covariance_type, weights_init=weights_init,
             means_init=means_init, precisions_init=precisions_init)
 
-        self.laplacian = laplacian
-        self.lap_mag = lap_mag
+        # TODO SOS: make the laplacian an arugment passed at runtime
+        self.laplacian = laplacian # Laplacian used for regularization
+        self.lap_mag = lap_mag # Scaling factor for regularization
+        self.lap_reduce = lap_reduce # controls how quickly the smoothing is reduced
+        self.lap_smooth = self.lap_reduce # holds the current smoothing factor
 
-    # Overloading this function from the "base" mixture model to add our regularizer
-    def _estimate_weighted_log_prob(self, X):
-        """Estimate the weighted log-probabilities, log P(X | Z) + log weights.
+        # we use this a lot, so save it
+        similarity = -1 * laplacian
+        similarity.setdiag(0)
+        similarity.eliminate_zeros()
 
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
+        self.similarity = similarity
 
-        Returns
-        -------
-        weighted_log_prob : array, shape (n_samples, n_component)
-        """
-
-        # print("Our overloaded function was called!")
-        res = super()._estimate_weighted_log_prob(X)
-
-        print("Average Unregularized output:", np.mean(res))
-        
-        if self.laplacian is not None and self.lap_mag is not None:
-            prob = np.exp(self._estimate_log_prob(X))
-            res = res - self.lap_mag * _lap_reg(prob, self.laplacian)
-
-        print("Average Regularized output:", np.mean(res))
-
-        return res
-
+        # Hacky lower bound shadow - should pass lower bound or restructure fit_predict
+        self.lower_bound_HAX = -np.infty
 
     # Overloading this function from the 'base' model to add smoothing
-    def fit_predict(self, X, y=None):
-        """Estimate model parameters using X and predict the labels for X.
-
-        The method fits the model n_init times and sets the parameters with
-        which the model has the largest likelihood or lower bound. Within each
-        trial, the method iterates between E-step and M-step for `max_iter`
-        times until the change of likelihood or lower bound is less than
-        `tol`, otherwise, a :class:`~sklearn.exceptions.ConvergenceWarning` is
-        raised. After fitting, it predicts the most probable label for the
-        input data points.
-
-        .. versionadded:: 0.20
+    def _e_step(self, X):
+        """E step.
 
         Parameters
         ----------
         X : array-like of shape (n_samples, n_features)
-            List of n_features-dimensional data points. Each row
-            corresponds to a single data point.
 
         Returns
         -------
-        labels : array, shape (n_samples,)
-            Component labels.
+        log_prob_norm : float
+            Mean of the logarithms of the probabilities of each sample in X
+
+        log_responsibility : array, shape (n_samples, n_components)
+            Logarithm of the posterior probabilities (or responsibilities) of
+            the point of each sample in X.
         """
-        X = _check_X(X, self.n_components, ensure_min_samples=2)
-        self._check_n_features(X, reset=True)
-        self._check_initial_parameters(X)
+        # HACK: shadow the lower-bound so we know what it is without 
+        lower_bound = self.lower_bound_HAX
 
-        # if we enable warm_start, we will have a unique initialisation
-        do_init = not(self.warm_start and hasattr(self, 'converged_'))
-        n_init = self.n_init if do_init else 1
+        log_prob_norm, log_resp = self._estimate_log_prob_resp(X)
 
-        max_lower_bound = -np.infty
-        self.converged_ = False
+        while True:
 
-        random_state = check_random_state(self.random_state)
+            #smooth here
+            reg2 = _lap_reg_2(np.exp(log_resp), self.similarity)
+            log_resp = (1 - self.lap_smooth) * log_resp + self.lap_smooth * reg2
 
-        n_samples, _ = X.shape
-        for init in range(n_init):
-            self._print_verbose_msg_init_beg(init)
+            # update the log_prob_norm (since we updated the probabilities)
+            log_prob_norm, _ = self._estimate_log_prob_resp(X)
+        
+            # HACK - we call this here so we can make sure our values are geud
+            # This will be immediately be called again when this function returns
+            self._m_step(X, log_resp)
 
-            if do_init:
-                self._initialize_parameters(X, random_state)
+            lower_bound = self._compute_lower_bound(log_resp, np.mean(log_prob_norm))
 
-            lower_bound = (-np.infty if do_init else self.lower_bound_)
+            change = lower_bound - prev_lower_bound
+            if change >= 0:
+                break
 
-            for n_iter in range(1, self.max_iter + 1):
-                prev_lower_bound = lower_bound
+            # If we didn't get better, apply more smoothing and try again
+            self.lap_smooth = self.lap_smooth * self.lap_reduce
+            print("lap_smooth %.5f ll change %.5f" % (self.lap_smooth, change))
 
-                log_prob_norm, log_resp = self._e_step(X)
-                self._m_step(X, log_resp)
-                lower_bound = self._compute_lower_bound(
-                    log_resp, log_prob_norm)
+        self.lower_bound_HAX = lower_bound
 
-                change = lower_bound - prev_lower_bound
-                self._print_verbose_msg_iter_end(n_iter, change)
+        return np.mean(log_prob_norm), log_resp
 
-                if abs(change) < self.tol:
-                    self.converged_ = True
-                    break
-
-            self._print_verbose_msg_init_end(lower_bound)
-
-            if lower_bound > max_lower_bound:
-                max_lower_bound = lower_bound
-                best_params = self._get_parameters()
-                best_n_iter = n_iter
-
-        if not self.converged_:
-            warnings.warn('Initialization %d did not converge. '
-                          'Try different init parameters, '
-                          'or increase max_iter, tol '
-                          'or check for degenerate data.'
-                          % (init + 1), ConvergenceWarning)
-
-        self._set_parameters(best_params)
-        self.n_iter_ = best_n_iter
-        self.lower_bound_ = max_lower_bound
-
-        # Always do a final e-step to guarantee that the labels returned by
-        # fit_predict(X) are always consistent with fit(X).predict(X)
-        # for any value of max_iter and tol (and any random_state).
-        _, log_resp = self._e_step(X)
-
-        return log_resp.argmax(axis=1)
+    def _compute_lower_bound(self, log_resp, log_prob_norm):
+        return log_prob_norm - self.lap_mag * _lap_reg(np.exp(log_resp), self.laplacian)
