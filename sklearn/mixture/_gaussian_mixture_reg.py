@@ -32,7 +32,7 @@ def _lap_reg(prob, laplacian):
         fk = prob[:, k]
         lap_reg[k] = fk @ laplacian @ fk
 
-    return lap_reg
+    return np.sum(lap_reg)
 
 def _lap_reg_2(prob, similarity):
     """calculate the laplacian regularizer
@@ -108,7 +108,6 @@ class LapRegGaussianMixture(GaussianMixture):
         lower_bound = self.lower_bound_HAX
 
         log_prob_norm, log_resp = self._estimate_log_prob_resp(X)
-        print("type(log_resp):", type(log_resp))
 
         (n_samples, n_component) = log_resp.shape
 
@@ -117,9 +116,7 @@ class LapRegGaussianMixture(GaussianMixture):
 
             #smooth here
             reg2 = _lap_reg_2(np.exp(log_resp), self.similarity)
-            print("type(reg2):", type(reg2))
             log_resp = (1 - self.lap_smooth) * log_resp + self.lap_smooth * reg2
-            print("type(log_resp):", type(log_resp))
             assert (n_samples, n_component) == log_resp.shape
 
             # update the log_prob_norm (since we updated the probabilities)
@@ -135,6 +132,7 @@ class LapRegGaussianMixture(GaussianMixture):
             lower_bound = self._compute_lower_bound(log_resp, np.mean(log_prob_norm))
 
             change = lower_bound - prev_lower_bound
+
             if change >= 0:
                 break
 
