@@ -276,14 +276,7 @@ def _estimate_gaussian_parameters(X, resp, reg_covar, covariance_type):
         The covariance matrix of the current components.
         The shape depends of the covariance_type.
     """
-    print("X.shape %s resp.shape %s" % (X.shape, resp.shape))
-    print("resp.sum(axis=0).shape", resp.sum(axis=0).shape)
     nk = resp.sum(axis=0) + 10 * np.finfo(resp.dtype).eps
-    print("resp.dtype:", resp.dtype)
-    print("nk.shape:", nk.shape)
-    traceback.print_stack()
-    # print("nk[:, np.newaxis].shape:", nk[:, np.newaxis].shape)
-    # print("X.shape:", X.shape)
 
     means = np.dot(resp.T, X) / nk[:, np.newaxis]
     covariances = {"full": _estimate_gaussian_covariances_full,

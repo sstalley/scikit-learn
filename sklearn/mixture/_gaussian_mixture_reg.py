@@ -49,8 +49,7 @@ def _lap_reg_2(prob, similarity):
     (n_samples, n_component) = prob.shape
     assert similarity.shape == (n_samples, n_samples)
 
-    prob = similarity @ prob / np.sum(similarity, axis=1)
-
+    prob = np.asarray(similarity @ prob / np.sum(similarity, axis=1))
 
     assert prob.shape == (n_samples, n_component)
     return prob 
@@ -109,14 +108,18 @@ class LapRegGaussianMixture(GaussianMixture):
         lower_bound = self.lower_bound_HAX
 
         log_prob_norm, log_resp = self._estimate_log_prob_resp(X)
+        print("type(log_resp):", type(log_resp))
 
         (n_samples, n_component) = log_resp.shape
 
         while True:
+            prev_lower_bound = lower_bound
 
             #smooth here
             reg2 = _lap_reg_2(np.exp(log_resp), self.similarity)
+            print("type(reg2):", type(reg2))
             log_resp = (1 - self.lap_smooth) * log_resp + self.lap_smooth * reg2
+            print("type(log_resp):", type(log_resp))
             assert (n_samples, n_component) == log_resp.shape
 
             # update the log_prob_norm (since we updated the probabilities)
