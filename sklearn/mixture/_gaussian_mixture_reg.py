@@ -49,10 +49,11 @@ def _lap_reg_2(prob, similarity):
     (n_samples, n_component) = prob.shape
     assert similarity.shape == (n_samples, n_samples)
 
-    prob = similarity @ prob / np.sum(similarity, axis=0)
+    prob = similarity @ prob / np.sum(similarity, axis=1)
 
+
+    assert prob.shape == (n_samples, n_component)
     return prob 
-
 
 class LapRegGaussianMixture(GaussianMixture):
 
@@ -109,15 +110,21 @@ class LapRegGaussianMixture(GaussianMixture):
 
         log_prob_norm, log_resp = self._estimate_log_prob_resp(X)
 
+        (n_samples, n_component) = log_resp.shape
+
         while True:
 
             #smooth here
             reg2 = _lap_reg_2(np.exp(log_resp), self.similarity)
             log_resp = (1 - self.lap_smooth) * log_resp + self.lap_smooth * reg2
+            assert (n_samples, n_component) == log_resp.shape
 
             # update the log_prob_norm (since we updated the probabilities)
             log_prob_norm, _ = self._estimate_log_prob_resp(X)
         
+            # print("log_resp.shape", log_resp.shape)
+            # print("X.shape", X.shape)
+
             # HACK - we call this here so we can make sure our values are geud
             # This will be immediately be called again when this function returns
             self._m_step(X, log_resp)
