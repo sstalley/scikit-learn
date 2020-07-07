@@ -84,6 +84,9 @@ class LapRegGaussianMixture(GaussianMixture):
 
         self.similarity = similarity
 
+        print("np.mean(laplacian):", np.mean(laplacian))
+        print("np.mean(similarity):", np.mean(similarity))
+
         # Hacky lower bound shadow - should pass lower bound or restructure fit_predict
         self.lower_bound_HAX = -np.infty
 
@@ -104,19 +107,19 @@ class LapRegGaussianMixture(GaussianMixture):
             Logarithm of the posterior probabilities (or responsibilities) of
             the point of each sample in X.
         """
-        # HACK: shadow the lower-bound so we know what it is without 
+        # HACK: shadow the lower-bound so we know what it is without looking
         lower_bound = self.lower_bound_HAX
+        prev_lower_bound = lower_bound
 
-        log_prob_norm, log_resp = self._estimate_log_prob_resp(X)
+        log_prob_norm, log_resp_orig = self._estimate_log_prob_resp(X)
 
-        (n_samples, n_component) = log_resp.shape
+        (n_samples, n_component) = log_resp_orig.shape
 
         while True:
-            prev_lower_bound = lower_bound
 
             #smooth here
-            reg2 = _lap_reg_2(np.exp(log_resp), self.similarity)
-            log_resp = (1 - self.lap_smooth) * log_resp + self.lap_smooth * reg2
+            reg2 = _lap_reg_2(np.exp(log_resp_orig), self.similarity)
+            log_resp = (1 - self.lap_smooth) * log_resp_orig + self.lap_smooth * reg2
             assert (n_samples, n_component) == log_resp.shape
 
             # update the log_prob_norm (since we updated the probabilities)
