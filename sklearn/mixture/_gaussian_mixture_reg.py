@@ -62,7 +62,7 @@ class LapRegGaussianMixture(GaussianMixture):
                  weights_init=None, means_init=None, precisions_init=None,
                  random_state=None, warm_start=False,
                  verbose=0, verbose_interval=10,
-                 laplacian=None, lap_mag=None, lap_reduce=0.9):
+                 laplacian=None, lap_mag=None, lap_reduce=0.9, lap_tol=1e-6):
         super().__init__(
             n_components=n_components, tol=tol, reg_covar=reg_covar,
             max_iter=max_iter, n_init=n_init, init_params=init_params,
@@ -75,7 +75,8 @@ class LapRegGaussianMixture(GaussianMixture):
         self.laplacian = laplacian # Laplacian used for regularization
         self.lap_mag = lap_mag # Scaling factor for regularization
         self.lap_reduce = lap_reduce # controls how quickly the smoothing is reduced
-        self.lap_smooth = self.lap_reduce # holds the current smoothing factor
+        self.lap_smooth = lap_reduce # holds the current smoothing factor
+        self.lap_tol = lap_tol # how low we allow the smoothing factor to get before giving up
 
         # we use this a lot, so save it
         similarity = -1 * laplacian
@@ -83,9 +84,6 @@ class LapRegGaussianMixture(GaussianMixture):
         similarity.eliminate_zeros()
 
         self.similarity = similarity
-
-        print("np.mean(laplacian):", np.mean(laplacian))
-        print("np.mean(similarity):", np.mean(similarity))
 
         # Hacky lower bound shadow - should pass lower bound or restructure fit_predict
         self.lower_bound_HAX = -np.infty
@@ -109,13 +107,15 @@ class LapRegGaussianMixture(GaussianMixture):
         """
         # HACK: shadow the lower-bound so we know what it is without looking
         lower_bound = self.lower_bound_HAX
+        orig_lower_bound = lower_bound
         prev_lower_bound = lower_bound
 
-        log_prob_norm, log_resp_orig = self._estimate_log_prob_resp(X)
+        log_prob_norm_orig, log_resp_orig = self._estimate_log_prob_resp(X)
 
         (n_samples, n_component) = log_resp_orig.shape
 
-        while True:
+
+        while self.lap_smooth > self.lap_tol:
 
             #smooth here
             reg2 = _lap_reg_2(np.exp(log_resp_orig), self.similarity)
@@ -142,6 +142,13 @@ class LapRegGaussianMixture(GaussianMixture):
             # If we didn't get better, apply more smoothing and try again
             self.lap_smooth = self.lap_smooth * self.lap_reduce
             print("lap_smooth %.5f ll change %.5f" % (self.lap_smooth, change))
+
+
+        # If we couldn't make it better, return what we had originally
+        if self.lap_smooth <= self.lap_tol:
+            log_prob_norm = log_prob_norm_orig
+            log_resp = log_prob_norm_orig
+            lower_bound = orig_lower_bound
 
         self.lower_bound_HAX = lower_bound
 
