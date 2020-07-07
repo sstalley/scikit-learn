@@ -62,7 +62,7 @@ class LapRegGaussianMixture(GaussianMixture):
                  weights_init=None, means_init=None, precisions_init=None,
                  random_state=None, warm_start=False,
                  verbose=0, verbose_interval=10,
-                 laplacian=None, lap_mag=None, lap_reduce=0.9, lap_tol=1e-6):
+                 laplacian=None, lap_mag=None, lap_reduce=0.9, lap_tol=1e-5):
         super().__init__(
             n_components=n_components, tol=tol, reg_covar=reg_covar,
             max_iter=max_iter, n_init=n_init, init_params=init_params,
@@ -147,7 +147,7 @@ class LapRegGaussianMixture(GaussianMixture):
         # If we couldn't make it better, return what we had originally
         if self.lap_smooth <= self.lap_tol:
             log_prob_norm = log_prob_norm_orig
-            log_resp = log_prob_norm_orig
+            log_resp = log_resp_orig
             lower_bound = orig_lower_bound
 
         self.lower_bound_HAX = lower_bound
