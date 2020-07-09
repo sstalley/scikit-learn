@@ -85,8 +85,126 @@ class LapRegGaussianMixture(GaussianMixture):
 
         self.similarity = similarity
 
-        # Hacky lower bound shadow - should pass lower bound or restructure fit_predict
-        self.lower_bound_HAX = -np.infty
+    def fit_predict(self, X, y=None):
+        """Estimate model parameters using X and predict the labels for X.
+
+        The method fits the model n_init times and sets the parameters with
+        which the model has the largest likelihood or lower bound. Within each
+        trial, the method iterates between E-step and M-step for `max_iter`
+        times until the change of likelihood or lower bound is less than
+        `tol`, otherwise, a :class:`~sklearn.exceptions.ConvergenceWarning` is
+        raised. After fitting, it predicts the most probable label for the
+        input data points.
+
+        .. versionadded:: 0.20
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            List of n_features-dimensional data points. Each row
+            corresponds to a single data point.
+
+        Returns
+        -------
+        labels : array, shape (n_samples,)
+            Component labels.
+        """
+        X = _check_X(X, self.n_components, ensure_min_samples=2)
+        self._check_n_features(X, reset=True)
+        self._check_initial_parameters(X)
+
+        # if we enable warm_start, we will have a unique initialisation
+        do_init = not(self.warm_start and hasattr(self, 'converged_'))
+        n_init = self.n_init if do_init else 1
+
+        max_lower_bound = -np.infty
+        self.converged_ = False
+
+        random_state = check_random_state(self.random_state)
+
+        n_samples, _ = X.shape
+        for init in range(n_init):
+            self._print_verbose_msg_init_beg(init)
+
+            if do_init:
+                self._initialize_parameters(X, random_state)
+
+            lower_bound = (-np.infty if do_init else self.lower_bound_)
+
+            for n_iter in range(1, self.max_iter + 1):
+                prev_lower_bound = lower_bound
+
+                #log_prob_norm, log_resp = self._e_step(X)
+                log_prob_norm_orig, log_resp_orig = self._estimate_log_prob_resp(X)
+                while self.lap_smooth > self.lap_tol:
+
+                    #smooth here
+                    reg2 = _lap_reg_2(np.exp(log_resp_orig), self.similarity)
+                    log_resp = (1 - self.lap_smooth) * log_resp_orig + self.lap_smooth * reg2
+                    assert (n_samples, self.n_components) == log_resp.shape
+        
+                    # update the log_prob_norm (since we updated the probabilities)
+                    log_prob_norm, _ = self._estimate_log_prob_resp(X)
+                
+                    # print("log_resp.shape", log_resp.shape)
+                    # print("X.shape", X.shape)
+        
+                    # HACK - we call this here so we can make sure our values are geud
+                    # This will be immediately be called again when this function returns
+                    self._m_step(X, log_resp)
+        
+                    lower_bound = self._compute_lower_bound(log_resp, np.mean(log_prob_norm))
+        
+                    change = lower_bound - prev_lower_bound
+        
+                    if change >= 0:
+                        break
+        
+                    # If we didn't get better, apply more smoothing and try again
+                    self.lap_smooth = self.lap_smooth * self.lap_reduce
+                    print("lap_smooth %.5f ll change %.5f" % (self.lap_smooth, change))
+
+                # If we couldn't make it better with smoothing, return what we had before
+                if self.lap_smooth <= self.lap_tol:
+                    log_prob_norm = log_prob_norm_orig
+                    log_resp = log_resp_orig
+                    lower_bound = prev_lower_bound
+        
+                # self._m_step(X, log_resp)
+                # lower_bound = self._compute_lower_bound(
+                #     log_resp, log_prob_norm)
+
+                change = lower_bound - prev_lower_bound
+                self._print_verbose_msg_iter_end(n_iter, change)
+
+                if change < self.tol:
+                    self.converged_ = True
+                    break
+
+            self._print_verbose_msg_init_end(lower_bound)
+
+            if lower_bound > max_lower_bound:
+                max_lower_bound = lower_bound
+                best_params = self._get_parameters()
+                best_n_iter = n_iter
+
+        if not self.converged_:
+            warnings.warn('Initialization %d did not converge. '
+                          'Try different init parameters, '
+                          'or increase max_iter, tol '
+                          'or check for degenerate data.'
+                          % (init + 1), ConvergenceWarning)
+
+        self._set_parameters(best_params)
+        self.n_iter_ = best_n_iter
+        self.lower_bound_ = max_lower_bound
+
+        # Always do a final e-step to guarantee that the labels returned by
+        # fit_predict(X) are always consistent with fit(X).predict(X)
+        # for any value of max_iter and tol (and any random_state).
+        _, log_resp = self._estimate_log_prob_resp(X)
+
+        return log_resp.argmax(axis=1)
 
     # Overloading this function from the 'base' model to add smoothing
     def _e_step(self, X):
@@ -105,54 +223,57 @@ class LapRegGaussianMixture(GaussianMixture):
             Logarithm of the posterior probabilities (or responsibilities) of
             the point of each sample in X.
         """
-        # HACK: shadow the lower-bound so we know what it is without looking
-        lower_bound = self.lower_bound_HAX
-        orig_lower_bound = lower_bound
-        prev_lower_bound = lower_bound
-
-        log_prob_norm_orig, log_resp_orig = self._estimate_log_prob_resp(X)
-
-        (n_samples, n_component) = log_resp_orig.shape
-
-
-        while self.lap_smooth > self.lap_tol:
-
-            #smooth here
-            reg2 = _lap_reg_2(np.exp(log_resp_orig), self.similarity)
-            log_resp = (1 - self.lap_smooth) * log_resp_orig + self.lap_smooth * reg2
-            assert (n_samples, n_component) == log_resp.shape
-
-            # update the log_prob_norm (since we updated the probabilities)
-            log_prob_norm, _ = self._estimate_log_prob_resp(X)
-        
-            # print("log_resp.shape", log_resp.shape)
-            # print("X.shape", X.shape)
-
-            # HACK - we call this here so we can make sure our values are geud
-            # This will be immediately be called again when this function returns
-            self._m_step(X, log_resp)
-
-            lower_bound = self._compute_lower_bound(log_resp, np.mean(log_prob_norm))
-
-            change = lower_bound - prev_lower_bound
-
-            if change >= 0:
-                break
-
-            # If we didn't get better, apply more smoothing and try again
-            self.lap_smooth = self.lap_smooth * self.lap_reduce
-            print("lap_smooth %.5f ll change %.5f" % (self.lap_smooth, change))
-
-
-        # If we couldn't make it better, return what we had originally
-        if self.lap_smooth <= self.lap_tol:
-            log_prob_norm = log_prob_norm_orig
-            log_resp = log_resp_orig
-            lower_bound = orig_lower_bound
-
-        self.lower_bound_HAX = lower_bound
-
-        return np.mean(log_prob_norm), log_resp
+        # This shouldn't ever get used anymore, but if it does we want to know
+        # about it and scream as loudly as we can
+        assert False
+#        # HACK: shadow the lower-bound so we know what it is without looking
+#        lower_bound = self.lower_bound_HAX
+#        orig_lower_bound = lower_bound
+#        prev_lower_bound = lower_bound
+#
+#        log_prob_norm_orig, log_resp_orig = self._estimate_log_prob_resp(X)
+#
+#        (n_samples, n_component) = log_resp_orig.shape
+#
+#
+#        while self.lap_smooth > self.lap_tol:
+#
+#            #smooth here
+#            reg2 = _lap_reg_2(np.exp(log_resp_orig), self.similarity)
+#            log_resp = (1 - self.lap_smooth) * log_resp_orig + self.lap_smooth * reg2
+#            assert (n_samples, n_component) == log_resp.shape
+#
+#            # update the log_prob_norm (since we updated the probabilities)
+#            log_prob_norm, _ = self._estimate_log_prob_resp(X)
+#        
+#            # print("log_resp.shape", log_resp.shape)
+#            # print("X.shape", X.shape)
+#
+#            # HACK - we call this here so we can make sure our values are geud
+#            # This will be immediately be called again when this function returns
+#            self._m_step(X, log_resp)
+#
+#            lower_bound = self._compute_lower_bound(log_resp, np.mean(log_prob_norm))
+#
+#            change = lower_bound - prev_lower_bound
+#
+#            if change >= 0:
+#                break
+#
+#            # If we didn't get better, apply more smoothing and try again
+#            self.lap_smooth = self.lap_smooth * self.lap_reduce
+#            print("lap_smooth %.5f ll change %.5f" % (self.lap_smooth, change))
+#
+#
+#        # If we couldn't make it better, return what we had originally
+#        if self.lap_smooth <= self.lap_tol:
+#            log_prob_norm = log_prob_norm_orig
+#            log_resp = log_resp_orig
+#            lower_bound = orig_lower_bound
+#
+#        self.lower_bound_HAX = lower_bound
+#
+#        return np.mean(log_prob_norm), log_resp
 
     def _compute_lower_bound(self, log_resp, log_prob_norm):
         return log_prob_norm - self.lap_mag * _lap_reg(np.exp(log_resp), self.laplacian)
