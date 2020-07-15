@@ -4,6 +4,7 @@
 # License: TBD (probably BSD 3 clause)
 
 import numpy as np
+from scipy import sparse
 from ._base import _check_X
 from ._gaussian_mixture import GaussianMixture
 from ..utils import check_random_state
@@ -63,7 +64,8 @@ class LapRegGaussianMixture(GaussianMixture):
                  weights_init=None, means_init=None, precisions_init=None,
                  random_state=None, warm_start=False,
                  verbose=0, verbose_interval=10,
-                 laplacian=None, lap_mag=None, lap_reduce=0.9, lap_tol=1e-5):
+                 laplacian=None, lap_mag=None, lap_reduce=0.9, lap_tol=1e-5,
+                 lap_reg=None):
         super().__init__(
             n_components=n_components, tol=tol, reg_covar=reg_covar,
             max_iter=max_iter, n_init=n_init, init_params=init_params,
@@ -73,6 +75,19 @@ class LapRegGaussianMixture(GaussianMixture):
             means_init=means_init, precisions_init=precisions_init)
 
         # TODO SOS: make the laplacian an arugment passed at runtime
+        if lap_reg is not None:
+            dinv = np.reciprocal(laplacian.diagonal())
+            if lap_reg == "rw": # Random Walk
+                print("random walk regularizing laplacian...")
+                laplacian = np.diag(dinv) @ laplacian
+            elif lap_reg == "sym": # Symmetric
+                print("symmetric regularizing laplacian...")
+                Dsqrt = np.diag(np.sqrt(dinv))
+                laplacian = Dsqrt @ laplacian @ Dsqrt
+
+        laplacian = sparse.csr_matrix(laplacian)
+
+
         self.laplacian = laplacian # Laplacian used for regularization
         self.lap_mag = lap_mag # Scaling factor for regularization
         self.lap_reduce = lap_reduce # controls how quickly the smoothing is reduced
