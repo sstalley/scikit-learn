@@ -79,10 +79,10 @@ class LapRegGaussianMixture(GaussianMixture):
             dinv = np.reciprocal(laplacian.diagonal())
             if lap_reg == "rw": # Random Walk
                 print("random walk regularizing laplacian...")
-                laplacian = np.diag(dinv) @ laplacian
+                laplacian = sparse.diags(dinv) @ laplacian
             elif lap_reg == "sym": # Symmetric
                 print("symmetric regularizing laplacian...")
-                Dsqrt = np.diag(np.sqrt(dinv))
+                Dsqrt = sparse.diags(np.sqrt(dinv))
                 laplacian = Dsqrt @ laplacian @ Dsqrt
 
         laplacian = sparse.csr_matrix(laplacian)
