@@ -121,7 +121,6 @@ class LapRegGaussianMixture(GaussianMixture):
             label = SpectralClustering(n_clusters=self.n_components, affinity='precomputed',
                                    random_state=random_state).fit(self.similarity).labels_
             resp[np.arange(n_samples), label] = 1
-            print(np.argmax(resp, axis=1))
             self._initialize(X, resp)
         else:
             super()._initialize_parameters(X, random_state)
