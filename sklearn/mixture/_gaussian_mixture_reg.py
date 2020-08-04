@@ -4,12 +4,14 @@
 # License: TBD (probably BSD 3 clause)
 
 import numpy as np
+import warnings
 from scipy import sparse
 from ._base import _check_X
 from ._gaussian_mixture import GaussianMixture
 from ..utils import check_random_state
 from ..utils.validation import _deprecate_positional_args
 from ..cluster import SpectralClustering
+from ..exceptions import ConvergenceWarning
 
 def _lap_reg(prob, laplacian):
     """calculate the laplacian regularizer
@@ -54,7 +56,7 @@ def _lap_reg_2(prob, similarity):
     prob = np.asarray(similarity @ prob / np.sum(similarity, axis=1))
 
     assert prob.shape == (n_samples, n_component)
-    return prob 
+    return prob
 
 class LapRegGaussianMixture(GaussianMixture):
 
@@ -76,7 +78,11 @@ class LapRegGaussianMixture(GaussianMixture):
 
         # TODO SOS: make the laplacian an arugment passed at runtime
         if lap_reg is not None:
-            dinv = np.reciprocal(laplacian.diagonal())
+            dinv = laplacian.diagonal()
+            print("np.count_nonzero(dinv):", np.count_nonzero(dinv))
+            print("dinv.shape:", dinv.shape)
+            dinv[dinv == 0] = np.inf # make the reciprocal of the zero entries zero
+            dinv = np.reciprocal(dinv)
             if lap_reg == "rw": # Random Walk
                 print("random walk regularizing laplacian...")
                 laplacian = sparse.diags(dinv) @ laplacian
@@ -185,24 +191,24 @@ class LapRegGaussianMixture(GaussianMixture):
                     reg2 = _lap_reg_2(np.exp(log_resp_orig), self.similarity)
                     log_resp = (1 - self.lap_smooth) * log_resp_orig + self.lap_smooth * reg2
                     assert (n_samples, self.n_components) == log_resp.shape
-        
+
                     # update the log_prob_norm (since we updated the probabilities)
                     log_prob_norm, _ = self._estimate_log_prob_resp(X)
-                
+
                     # print("log_resp.shape", log_resp.shape)
                     # print("X.shape", X.shape)
-        
+
                     # HACK - we call this here so we can make sure our values are geud
                     # This will be immediately be called again when this function returns
                     self._m_step(X, log_resp)
-        
+
                     lower_bound = self._compute_lower_bound(log_resp, np.mean(log_prob_norm))
-        
+
                     change = lower_bound - prev_lower_bound
-        
+
                     if change >= 0:
                         break
-        
+
                     # If we didn't get better, apply more smoothing and try again
                     self.lap_smooth = self.lap_smooth * self.lap_reduce
                     print("lap_smooth %.5f ll change %.5f" % (self.lap_smooth, change))
@@ -212,7 +218,7 @@ class LapRegGaussianMixture(GaussianMixture):
                     log_prob_norm = log_prob_norm_orig
                     log_resp = log_resp_orig
                     lower_bound = prev_lower_bound
-        
+
                 # self._m_step(X, log_resp)
                 # lower_bound = self._compute_lower_bound(
                 #     log_resp, log_prob_norm)
